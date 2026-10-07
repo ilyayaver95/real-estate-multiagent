@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rem-agent"
+version = "0.1.0"
+description = "LangGraph multi-agent assistant for real-estate asset management over a general-ledger dataset"
+requires-python = ">=3.11"
+dependencies = [
+  "langgraph>=1.0",
+  "langchain>=1.0",
+  "langchain-core>=1.0",
+  "langchain-openai>=1.0",
+  "pydantic>=2.7",
+  "pandas>=2.2",
+  "pyarrow>=15",
+  "rapidfuzz>=3.6",
+  "python-dotenv>=1.0",
+  "streamlit>=1.38",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+markers = ["live: tests that call the OpenAI API (deselect with '-m \"not live\"')"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/rem_agent/agents/prompts.py" = ["E501"]
