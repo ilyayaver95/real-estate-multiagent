@@ -171,7 +171,16 @@ def match_name(
 
 
 # ---- time ----------------------------------------------------------------------------------------
-def timespec_to_range(spec: TimeSpec, as_of: pd.Period) -> PeriodRange | None:
+_LAST_FULL_YEAR = re.compile(
+    r"(?:last|previous|prior|most recent)\s+(?:complete|full|whole|entire)\s+"
+    r"(?:calendar\s+|fiscal\s+|financial\s+)?year",
+    re.I,
+)
+
+
+def timespec_to_range(
+    spec: TimeSpec, as_of: pd.Period, first: pd.Period | None = None
+) -> PeriodRange | None:
     """TimeSpec -> PeriodRange.
 
     The raw phrase is parsed first (deterministic, anchored to the dataset's as-of month) because
@@ -180,6 +189,8 @@ def timespec_to_range(spec: TimeSpec, as_of: pd.Period) -> PeriodRange | None:
     """
     if spec.kind == "all":
         return None
+    if _LAST_FULL_YEAR.search(spec.raw or ""):
+        return P.last_full_year(as_of, first or pd.Period("1900-01", "M"))
     parsed = P.parse_period_text(spec.raw, as_of)
     if parsed is not None:
         return parsed
@@ -208,6 +219,13 @@ def timespec_to_range(spec: TimeSpec, as_of: pd.Period) -> PeriodRange | None:
             return P.quarter_range(spec.year, spec.quarter)
         if spec.kind == "month" and spec.year and spec.month:
             return P.month_range(spec.year, spec.month)
+        if spec.kind == "half" and spec.year and spec.half:
+            return P.half_range(spec.year, spec.half)
+        if spec.kind == "range" and spec.year and spec.month and spec.end_month:
+            start = pd.Period(f"{spec.year}-{spec.month:02d}", "M")
+            end = pd.Period(f"{spec.end_year or spec.year}-{spec.end_month:02d}", "M")
+            if start <= end:
+                return PeriodRange(start, end, f"{start} to {end}")
         if spec.n_months:
             return P.last_n_months(as_of, spec.n_months)
     except ValueError:
@@ -228,30 +246,17 @@ def spec_to_range(s: PeriodSpec | None) -> PeriodRange | None:
 # ---- main ----------------------------------------------------------------------------------------
 _PROP_PATTERN = re.compile(r"\b(?:building|bldg|bld|blg)\.?\s*#?\s*(\d+)\b", re.I)
 _TENANT_PATTERN = re.compile(r"\btenants?\s*#?\s*(\d+)\b", re.I)
-_RELATIVE_PHRASES = [
-    "same period last year",
-    "same quarter last year",
-    "same month last year",
-    "year to date",
-    "year-to-date",
-    "ytd",
-    "this year",
-    "current year",
-    "last year",
-    "previous year",
-    "prior year",
-    "this quarter",
-    "current quarter",
-    "latest quarter",
-    "most recent quarter",
-    "last quarter",
-    "previous quarter",
-    "prior quarter",
-    "this month",
-    "current month",
-    "latest month",
-    "last month",
-    "previous month",
+_RELATIVE_PATTERNS = [
+    r"same (?:period|quarter|month|time) (?:last|previous|prior) year",
+    r"year[- ]to[- ]date|ytd",
+    r"(?:the\s+)?(?:last|previous|prior|most recent)\s+(?:complete|full|whole|entire)\s+"
+    r"(?:calendar\s+|fiscal\s+|financial\s+)?year",
+    r"(?:this|current|latest|most recent)\s+(?:calendar\s+|fiscal\s+|financial\s+)?year",
+    r"(?:last|previous|prior)\s+(?:calendar\s+|fiscal\s+|financial\s+)?year",
+    r"(?:this|current|latest|most recent)\s+quarter",
+    r"(?:last|previous|prior)\s+quarter",
+    r"(?:this|current|latest|most recent)\s+month",
+    r"(?:last|previous|prior)\s+month",
 ]
 _LAST_N = re.compile(r"\b(?:last|past|previous|trailing)\s+(\d{1,2})\s+months?\b", re.I)
 
@@ -273,15 +278,13 @@ def scan_entities(text: str) -> tuple[list[str], list[str]]:
 
 def relative_phrases(text: str) -> list[str]:
     """Relative time phrases present in the text, in order of appearance."""
-    found: list[tuple[int, str]] = []
+    found: list[tuple[int, int, str]] = []
     low = (text or "").lower()
-    for phrase in _RELATIVE_PHRASES:
-        for m in re.finditer(rf"\b{re.escape(phrase)}\b", low):
-            if not any(a <= m.start() < a + len(ph) for a, ph in found):
-                found.append((m.start(), phrase))
-    for m in _LAST_N.finditer(low):
-        found.append((m.start(), m.group(0)))
-    return [ph for _, ph in sorted(found)]
+    for pat in _RELATIVE_PATTERNS + [_LAST_N.pattern]:
+        for m in re.finditer(rf"\b(?:{pat})\b", low):
+            if not any(a <= m.start() < b for a, b, _ in found):
+                found.append((m.start(), m.end(), m.group(0)))
+    return [ph for _, _, ph in sorted(found)]
 
 
 def _words_to_digits(text: str) -> str:
@@ -296,8 +299,28 @@ def _mentioned_number(name: str, texts: list[str]) -> bool:
     return num is None or any(re.search(rf"\b{num}\b", _words_to_digits(t)) for t in texts)
 
 
+_DEDUPE_WORDS = re.compile(
+    r"\b(?:excluding|exclude|without|ignoring|ignore|dropping|drop|removing|remove|net of|"
+    r"after removing|de-?duplicat\w*|dedup\w*)\b[^.?!]{0,25}\bduplicat\w*|\bdedup\w*",
+    re.I,
+)
+
+
+_NET_WORDS = re.compile(
+    r"\b(?:make|made|making|earn\w*|profit\w*|result|bottom line|net|p&l|pnl|margin)\b", re.I
+)
+_REVENUE_WORDS = re.compile(
+    r"\b(?:revenue\w*|income|sales|turnover|top line|proceeds|rent\w*|parking)\b", re.I
+)
+_SPAN_WORDS = re.compile(r"\b(?:to|through|until|and|half|h[12])\b|[-–—]", re.I)
+
+
 def resolve_task(
-    sq: SubQuestion, slots: ExtractedSlots, catalog: DataCatalog, original: str | None = None
+    sq: SubQuestion,
+    slots: ExtractedSlots,
+    catalog: DataCatalog,
+    original: str | None = None,
+    single: bool = True,
 ) -> ResolvedTask:
     as_of = catalog.as_of
     issues: list[Issue] = []
@@ -305,13 +328,21 @@ def resolve_task(
         id=sq.id, text=sq.text, intent=sq.intent, specialist=SPECIALIST_FOR_INTENT[sq.intent]
     )
     texts = [sq.text, original or ""]
+    # For a single sub-question the user's message is the best source of entities and
+    # timeframes; for compound questions each sub-question owns its own (otherwise every part
+    # would inherit every entity mentioned anywhere in the message).
+    scan_text = f"{sq.text} {original or ''}" if single else sq.text
+    time_text = (original or sq.text) if single else sq.text
 
     # Safety nets around the LLM extraction:
     # 1) add entities the regex finds in the text that the extractor missed;
     # 2) drop entities whose number is not in the text at all (hallucinated from the catalog);
-    # 3) a relative time phrase in the user's words beats a concrete year the LLM substituted.
-    scanned_props, scanned_tenants = scan_entities(f"{sq.text} {original or ''}")
+    # 3) a relative time phrase in the user's words beats a concrete year the LLM substituted;
+    # 4) an explicit timeframe in the text beats a missing or hallucinated one.
+    scanned_props, scanned_tenants = scan_entities(scan_text)
     slots = slots.model_copy(deep=True)
+    if _DEDUPE_WORDS.search(scan_text):
+        task.dedupe = True
     for name in scanned_props:
         if not any(
             _digits(m) == _digits(name) or m.lower() == name.lower() for m in slots.properties
@@ -322,17 +353,34 @@ def resolve_task(
             slots.tenants.append(name)
     slots.properties = [m for m in slots.properties if _mentioned_number(m, texts)]
     slots.tenants = [m for m in slots.tenants if _mentioned_number(m, texts)]
-    rel = relative_phrases(original or sq.text)
-    if rel and (not slots.timeframes or slots.timeframes[0].kind in ("year", "quarter", "month")):
-        if not slots.timeframes or not any(
-            str(ts.year) in (original or "") for ts in slots.timeframes[:1] if ts.year
-        ):
+    rel = relative_phrases(time_text)
+    explicit = P.explicit_period_phrases(time_text)
+    year_in_text = any(
+        ts.year and str(ts.year) in time_text for ts in slots.timeframes[:1] if ts.year
+    )
+    concrete_kinds = ("year", "quarter", "month", "half", "range")
+    if rel and (not slots.timeframes or slots.timeframes[0].kind in concrete_kinds):
+        if not slots.timeframes or not year_in_text:
             slots.timeframes = [TimeSpec(raw=r, kind="relative") for r in rel] + [
                 ts for ts in slots.timeframes if ts.kind == "all"
             ]
             for ts in slots.timeframes:
                 if ts.raw.startswith("same "):
                     ts.relative = "same_period_last_year"
+    elif explicit and (
+        not slots.timeframes
+        or (slots.timeframes[0].kind in concrete_kinds and not year_in_text)
+        or (
+            slots.timeframes[0].kind in ("unknown", "month")
+            and timespec_to_range(slots.timeframes[0], as_of, catalog.min_period) is None
+        )
+        or (
+            # the text has a span ("March to June 2024", "H1 2024") but the model kept one month
+            _SPAN_WORDS.search(explicit[0])
+            and slots.timeframes[0].kind in ("month", "quarter", "unknown")
+        )
+    ):
+        slots.timeframes = [TimeSpec(raw=e) for e in explicit]
 
     # Properties / tenants
     for mention in slots.properties:
@@ -395,7 +443,7 @@ def resolve_task(
     # Timeframes
     ranges: list[PeriodRange | None] = []
     for ts in slots.timeframes:
-        r = timespec_to_range(ts, as_of)
+        r = timespec_to_range(ts, as_of, catalog.min_period)
         if (
             r is None
             and ts.kind != "all"
@@ -484,10 +532,12 @@ def resolve_task(
                 )
             )
 
-    # Account filters
-    if slots.ledger_types:
+    # Account filters. "How much did we make / earn / profit" is net, not revenue, unless the
+    # user literally says revenue/income/sales.
+    wants_net = _NET_WORDS.search(scan_text) and not _REVENUE_WORDS.search(scan_text)
+    if slots.ledger_types and not (wants_net and set(slots.ledger_types) == {"revenue"}):
         task.ledger_types = sorted(set(slots.ledger_types))
-    elif slots.metric in ("revenue", "expenses"):
+    elif slots.metric in ("revenue", "expenses") and not (wants_net and slots.metric == "revenue"):
         task.ledger_types = [slots.metric]
     groups, cats = set(), set()
     for term in slots.ledger_terms:
@@ -499,7 +549,7 @@ def resolve_task(
     elif groups:
         task.ledger_groups = sorted(groups)
 
-    task.metric = slots.metric
+    task.metric = "net" if (wants_net and slots.metric == "revenue") else slots.metric
     task.top_n = slots.top_n
     task.breakdown_by = slots.breakdown_by or task.breakdown_by
     task.granularity = slots.granularity
@@ -629,8 +679,15 @@ def resolve_all(
     catalog: DataCatalog,
     original: str | None = None,
 ) -> list[ResolvedTask]:
+    single = len(sub_questions) == 1
     tasks = [
-        resolve_task(sq, slots.get(sq.id, ExtractedSlots(sub_question_id=sq.id)), catalog, original)
+        resolve_task(
+            sq,
+            slots.get(sq.id, ExtractedSlots(sub_question_id=sq.id)),
+            catalog,
+            original,
+            single=single,
+        )
         for sq in sub_questions
     ]
     return merge_duplicate_tasks(tasks)

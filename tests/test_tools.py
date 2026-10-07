@@ -201,3 +201,9 @@ def test_audit_scoped_to_property(audit):
     res = audit.run_all(LedgerFilter(properties=("Building 17",)))
     assert res["rows_examined"] < 3924
     assert all(isinstance(f["examples"], list) for f in res["findings"])
+
+
+def test_partial_year_comparison_drops_misleading_percentages(fin):
+    res = fin.compare_periods(LedgerFilter(), year_range(2025), year_range(2024))
+    assert all(d["relative"] is None for d in res["delta_a_minus_b"].values())
+    assert res["like_for_like"]["delta_a_minus_b"]["net"]["relative"] is not None

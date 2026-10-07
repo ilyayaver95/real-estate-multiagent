@@ -8,7 +8,7 @@ Streamlit chat UI on top.
 
 - **Live demo:** https://rem-asset-manager-agent.streamlit.app (Streamlit Community Cloud; the first load after idle takes ~30 s)
 - **Monitoring dashboard:** the *Monitoring* page of the app (latency, tokens, cost, verification, routing KPIs)
-- **Evaluation run (27 questions, verbatim answers):** [`docs/EVAL_RESULTS.md`](docs/EVAL_RESULTS.md)
+- **Evaluation run (37 questions, verbatim answers):** [`docs/EVAL_RESULTS.md`](docs/EVAL_RESULTS.md)
 
 Example interactions (all real outputs, see the evaluation report):
 
@@ -39,9 +39,9 @@ streamlit run app/streamlit_app.py
 Other entry points:
 
 ```bash
-pytest                                   # 94 offline tests, no API key needed (~1s)
+pytest                                   # 99 offline tests, no API key needed (~1s)
 python scripts/smoke_live.py "Top 3 tenants in 2025"   # one question, with the agent trace
-python scripts/run_eval.py               # 27-question evaluation -> docs/EVAL_RESULTS.md
+python scripts/run_eval.py               # 37-question evaluation -> docs/EVAL_RESULTS.md
 ```
 
 Configuration (environment variables or `.env`): `OPENAI_API_KEY` (required), `REM_MODEL`
@@ -122,7 +122,7 @@ src/rem_agent/
     portfolio.py              property_details, portfolio_overview, top_tenants, tenant_details
     audit.py                  9 anomaly / data-quality checks
   data/loader.py, catalog.py  Dataset loading, normalisation, duplicate flagging, entity catalog
-tests/                        94 offline tests (tools against hand-computed numbers, resolver,
+tests/                        99 offline tests (tools against hand-computed numbers, resolver,
                               guard, graph wiring with fake agents, regressions from live runs)
 scripts/                      smoke_live.py, run_eval.py
 ```
@@ -312,7 +312,44 @@ traces (the regressions are now unit tests).
     content blocks) were handled by pinning versions in `requirements.txt` and checking current
     docs rather than relying on memory.
 
+A second, adversarial review with phrasings deliberately unlike the development questions found
+five more silent errors, all fixed and covered by tests:
+
+12. **"How much money did we make?"** was filtered to revenue and the revenue labelled "net
+    profit". *Fix:* a revenue-only or expenses-only filter now returns `null` for the other
+    figures with an explicit "revenue-only view" caveat, and profit wording ("make", "earn",
+    "result") clears a revenue filter unless the user literally says revenue/income.
+13. **Half-years and month ranges** ("H1 2024", "from March to June 2024") were not representable:
+    H1 silently became "all data" and the range became a single month. *Fix:* `TimeSpec` gained
+    `half` and `range` kinds, the parser understands both, and an explicit-timeframe scan of the
+    user's text overrides a missing or narrower extraction.
+14. **Compound questions shared entities**: "P&L for tenant 7 and tenant 14" gave both tenants
+    both filters because the entity safety net scanned the whole message for every sub-question.
+    *Fix:* for compound questions each sub-question is scanned on its own text only.
+15. **"Share of revenue from parking" returned 100%** because the account filter also applied to
+    the denominator. *Fix:* when an account filter is active, `get_pnl` also returns the
+    unfiltered scope totals and the share.
+16. **Full-year vs partial-year comparisons** produced true but meaningless percentages (2025 has
+    three months). *Fix:* `compare_periods` adds a like-for-like block over the common months and
+    omits the full-period percentages. "Excluding duplicates" in the question now switches the
+    calculation to the de-duplicated view, and "last complete year" resolves to the last fully
+    covered year rather than to the model's idea of the current date.
+
 ---
+
+### Generalisation notes (what is dataset-specific)
+
+The pipeline is generic (catalog-driven names, catalog-checked account vocabulary, tools
+parameterised by filters), but a few safety nets are tuned to this ledger and to English:
+
+- The regex entity scan assumes `Building N` / `Tenant N` naming and Western street-address
+  patterns; a dataset with other naming still works through the LLM extractor and fuzzy
+  matching, but loses the deterministic backstop.
+- The account vocabulary (`parking`, `mortgage interest`, ...) maps onto this chart of accounts
+  and is validated against the catalog, so unknown terms fall back to fuzzy category matching.
+- The concreteness check that decides between acting and asking is English-only; non-English
+  questions are still routed and answered (Spanish was tested) but fall back to acting with
+  defaults.
 
 ## 8. Known limitations and next steps
 

@@ -24,7 +24,11 @@ SPECIALIST_EXTRA = {
     "finance": (
         "For P&L questions call get_pnl (and get_breakdown if the user asks what drives it). "
         "For comparisons between periods you MUST call compare_periods, which returns the deltas; "
-        "never subtract or compute percentages yourself. To compare properties or tenants call "
+        "never subtract or compute percentages yourself. If the result has a 'like_for_like' "
+        "block, quote those growth rates (same months in both periods) and say the full-period "
+        "deltas are distorted by partial coverage. If the result has 'share_of_scope', use it for "
+        "any "
+        "share/percentage question. To compare properties or tenants call "
         "get_breakdown(by='property'|'tenant'). For trends call get_trend. If the resolved period "
         "is partial (e.g. 2025 has 3 months) say so and, when comparing years, suggest a "
         "like-for-like comparison. If the comparison period is outside the data, still report the "
@@ -100,6 +104,8 @@ def run_tool_specialist(
         exclude_none=True,
     )
     issues = [i.message for i in task.issues] or ["none"]
+    if dedupe:
+        issues.append("Exact duplicate ledger rows are EXCLUDED from all figures in this answer.")
     system = SPECIALIST_SYSTEM.format(
         name=task.specialist,
         task_text=task.text,

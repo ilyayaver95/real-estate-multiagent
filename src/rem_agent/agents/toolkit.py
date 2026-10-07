@@ -97,8 +97,8 @@ def build_tools(
         ledger_groups: list[str] | None = None,
         ledger_categories: list[str] | None = None,
     ) -> LedgerFilter:
-        props = tuple(properties if properties is not None else task.properties)
-        tens = tuple(tenants if tenants is not None else task.tenants)
+        props = tuple(properties or task.properties)
+        tens = tuple(tenants or task.tenants)
         if start or end or period_label:
             per = _period(start, end, period_label, as_of)
         else:
@@ -107,11 +107,9 @@ def build_tools(
             properties=tuple(p for p in props if p in catalog.properties),
             tenants=tuple(t for t in tens if t in catalog.tenants),
             period=per,
-            ledger_types=tuple(ledger_types if ledger_types is not None else task.ledger_types),
-            ledger_groups=tuple(ledger_groups if ledger_groups is not None else task.ledger_groups),
-            ledger_categories=tuple(
-                ledger_categories if ledger_categories is not None else task.ledger_categories
-            ),
+            ledger_types=tuple(ledger_types or task.ledger_types),
+            ledger_groups=tuple(ledger_groups or task.ledger_groups),
+            ledger_categories=tuple(ledger_categories or task.ledger_categories),
         )
 
     # ---- finance -------------------------------------------------------------------------------
@@ -239,7 +237,7 @@ def build_tools(
         period_label: str | None = None,
     ) -> str:
         """Top tenants by attributed revenue with share and concentration."""
-        props = tuple(properties if properties is not None else task.properties)
+        props = tuple(properties or task.properties)
         res = port.top_tenants(
             n=n,
             period=_period(start, end, period_label, as_of) or _spec_range(task.period),

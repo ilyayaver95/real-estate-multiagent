@@ -84,6 +84,13 @@ class Assistant:
     ) -> TurnResult:
         result.metrics = build_metrics(result, handler, self.settings.model, question, dedupe)
         self.metrics.record(result.metrics)
+        if not result.interrupted:
+            # Checkpoints are only needed while a turn is paused for clarification; dropping
+            # finished threads keeps the shared in-memory saver from growing without bound.
+            try:
+                self.checkpointer.delete_thread(result.thread_id)
+            except Exception:
+                pass
         return result
 
     def _to_result(self, state: dict, thread_id: str, elapsed_s: float = 0.0) -> TurnResult:

@@ -180,13 +180,9 @@ def build_graph(
             elif task.specialist == "knowledge":
                 res = run_knowledge_specialist(llm, catalog, task)
             else:
+                dedupe = task.dedupe if task.dedupe is not None else state.get("dedupe", False)
                 res = run_tool_specialist(
-                    llm,
-                    ledger,
-                    catalog,
-                    task,
-                    dedupe=state.get("dedupe", False),
-                    max_rounds=max_tool_rounds,
+                    llm, ledger, catalog, task, dedupe=dedupe, max_rounds=max_tool_rounds
                 )
         except Exception as exc:  # never let one specialist kill the turn
             res = SpecialistResult(

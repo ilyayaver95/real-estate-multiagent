@@ -88,6 +88,63 @@ def natural_label(start: pd.Period, end: pd.Period) -> str:
     return f"{start} to {end}"
 
 
+_MONTH_RE = "|".join(sorted(_MONTHS, key=len, reverse=True))
+_RANGE_PATTERNS = [
+    # "march to june 2024", "from mar - jun 2024", "between march and june 2024"
+    re.compile(
+        rf"^(?:from\s+|between\s+)?({_MONTH_RE})\.?\s*(?:(\d{{4}})\s*)?(?:to|-|–|—|through|until|and)\s*({_MONTH_RE})\.?\s+(\d{{4}})$"
+    ),
+    # "2024-03 to 2024-06", "2024-m03 - 2024-m06"
+    re.compile(
+        r"^(?:from\s+)?(\d{4})-m?(\d{1,2})\s*(?:to|-|–|—|through|until)\s*(\d{4})-m?(\d{1,2})$"
+    ),
+]
+
+
+def _parse_month_range(t: str) -> PeriodRange | None:
+    m = _RANGE_PATTERNS[0].match(t)
+    if m:
+        m1, y1, m2, y2 = m.groups()
+        y1 = int(y1) if y1 else int(y2)
+        start = pd.Period(f"{y1}-{_MONTHS[m1]:02d}", "M")
+        end = pd.Period(f"{int(y2)}-{_MONTHS[m2]:02d}", "M")
+        if start <= end:
+            return PeriodRange(start, end, f"{start} to {end}")
+        return None
+    m = _RANGE_PATTERNS[1].match(t)
+    if m:
+        y1, m1, y2, m2 = (int(x) for x in m.groups())
+        start, end = pd.Period(f"{y1}-{m1:02d}", "M"), pd.Period(f"{y2}-{m2:02d}", "M")
+        if start <= end:
+            return PeriodRange(start, end, f"{start} to {end}")
+    return None
+
+
+def explicit_period_phrases(text: str) -> list[str]:
+    """Explicit timeframe phrases in free text (ranges first so they win over their parts)."""
+    low = (text or "").lower()
+    found: list[tuple[int, int, str]] = []
+
+    def add(m: re.Match) -> None:
+        if not any(a <= m.start() < b for a, b, _ in found):
+            found.append((m.start(), m.end(), m.group(0)))
+
+    patterns = [
+        rf"\b(?:from\s+|between\s+)?(?:{_MONTH_RE})\.?\s*(?:\d{{4}}\s*)?(?:to|-|–|—|through|until|and)\s*(?:{_MONTH_RE})\.?\s+\d{{4}}\b",
+        r"\b\d{4}-m?\d{1,2}\s*(?:to|-|–|—|through|until)\s*\d{4}-m?\d{1,2}\b",
+        r"\b(?:the\s+)?(?:first|second|1st|2nd)\s+half\s+(?:of\s+)?\d{4}\b",
+        r"\bh[12]\s*[-/ ]?\s*\d{4}\b|\b\d{4}\s*[-/ ]?\s*h[12]\b",
+        r"\bq[1-4]\s*[-/ ]?\s*\d{4}\b|\b\d{4}\s*[-/ ]?\s*q[1-4]\b",
+        rf"\b(?:{_MONTH_RE})\.?\s+\d{{4}}\b",
+        r"\b\d{4}-m?\d{2}\b",
+        r"\b(?:fy\s?)?(?:20\d\d)\b",
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, low):
+            add(m)
+    return [s for _, _, s in sorted(found)]
+
+
 def year_range(year: int) -> PeriodRange:
     return PeriodRange(pd.Period(f"{year}-01", "M"), pd.Period(f"{year}-12", "M"), str(year))
 
@@ -106,6 +163,23 @@ def month_range(year: int, m: int) -> PeriodRange:
 
 def range_from_periods(start: pd.Period, end: pd.Period, label: str | None = None) -> PeriodRange:
     return PeriodRange(start, end, label or f"{start} to {end}")
+
+
+def half_range(year: int, half: int) -> PeriodRange:
+    if half not in (1, 2):
+        raise ValueError(f"half must be 1 or 2, got {half}")
+    start = pd.Period(f"{year}-{1 if half == 1 else 7:02d}", "M")
+    return PeriodRange(start, start + 5, f"{year}-H{half}")
+
+
+def last_full_year(as_of: pd.Period, first: pd.Period) -> PeriodRange | None:
+    """Most recent year fully covered by the data (12 months), or None."""
+    year = as_of.year if as_of.month == 12 else as_of.year - 1
+    while year >= first.year:
+        if pd.Period(f"{year}-01", "M") >= first:
+            return year_range(year)
+        year -= 1
+    return None
 
 
 def ytd_range(as_of: pd.Period) -> PeriodRange:
@@ -148,6 +222,32 @@ def parse_period_text(text: str, as_of: pd.Period) -> PeriodRange | None:
     m = re.fullmatch(r"(?:last|past|previous|trailing)\s+(\d{1,2})\s+months?", t)
     if m:
         return last_n_months(as_of, int(m.group(1)))
+    m = re.fullmatch(
+        r"(?:the\s+)?(?:last|previous|prior|most recent)\s+(?:complete|full|whole|entire)\s+"
+        r"(?:calendar\s+|fiscal\s+|financial\s+)?year",
+        t,
+    )
+    if m:
+        return None  # resolved by the caller with knowledge of coverage (see resolver)
+    m = re.fullmatch(r"(?:this|current)\s+(?:calendar\s+|fiscal\s+|financial\s+)?year", t)
+    if m:
+        return ytd_range(as_of)
+    m = re.fullmatch(r"(?:last|previous|prior)\s+(?:calendar\s+|fiscal\s+|financial\s+)?year", t)
+    if m:
+        return year_range(as_of.year - 1)
+    m = re.fullmatch(r"h([12])\s*[-/ ]?\s*(\d{4})", t) or re.fullmatch(
+        r"(\d{4})\s*[-/ ]?\s*h([12])", t
+    )
+    if m:
+        a, b = m.groups()
+        year, h = (int(b), int(a)) if len(a) == 1 else (int(a), int(b))
+        return half_range(year, h)
+    m = re.fullmatch(r"(?:the\s+)?(first|second|1st|2nd)\s+half\s+(?:of\s+)?(\d{4})", t)
+    if m:
+        return half_range(int(m.group(2)), 1 if m.group(1) in ("first", "1st") else 2)
+    rng = _parse_month_range(t)
+    if rng is not None:
+        return rng
     m = re.fullmatch(r"(?:fy\s?)?(\d{4})", t)
     if m:
         return year_range(int(m.group(1)))

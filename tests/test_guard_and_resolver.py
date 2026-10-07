@@ -361,3 +361,79 @@ def test_out_of_coverage_flag(catalog):
     assert not resolve_task(
         _sq(Intent.PNL, "P&L 2025"), slots2, catalog, original="P&L 2025"
     ).out_of_coverage
+
+
+# ---- regressions from the adversarial review ---------------------------------------------------
+def test_compound_sub_questions_do_not_share_entities(catalog):
+    """'pnl for tenant 7 and tenant 14' split in two must not give both tenants to both."""
+    from rem_agent.agents.resolver import resolve_all
+
+    sqs = [
+        SubQuestion(id="q1", text="P&L for Tenant 7", intent=Intent.PNL, rationale="r"),
+        SubQuestion(id="q2", text="P&L for Tenant 14", intent=Intent.PNL, rationale="r"),
+    ]
+    slots = {
+        "q1": ExtractedSlots(sub_question_id="q1", tenants=["Tenant 7"]),
+        "q2": ExtractedSlots(sub_question_id="q2", tenants=["Tenant 14"]),
+    }
+    tasks = resolve_all(sqs, slots, catalog, "give me the pnl for tenant 7 and tenant 14")
+    assert [t.tenants for t in tasks] == [["Tenant 7"], ["Tenant 14"]]
+
+
+def test_explicit_timeframe_in_text_is_recovered(catalog):
+    text = "what were our management fees in H1 2024?"
+    task = resolve_task(
+        _sq(Intent.PNL, text), ExtractedSlots(sub_question_id="q1"), catalog, original=text
+    )
+    assert task.period.label == "2024-H1"
+    text2 = "Show revenue for Building 17 from March to June 2024"
+    slots2 = ExtractedSlots(
+        sub_question_id="q1",
+        properties=["Building 17"],
+        timeframes=[TimeSpec(raw="March 2024", kind="month", year=2024, month=3)],
+    )
+    task2 = resolve_task(_sq(Intent.PNL, text2), slots2, catalog, original=text2)
+    assert (task2.period.start, task2.period.end) == ("2024-03", "2024-06")
+
+
+def test_last_complete_year_resolves_to_last_full_year(catalog):
+    text = "net result for the last complete year"
+    slots = ExtractedSlots(
+        sub_question_id="q1",
+        timeframes=[TimeSpec(raw="last complete year", kind="year", year=2023)],
+    )
+    task = resolve_task(_sq(Intent.PNL, text), slots, catalog, original=text)
+    assert task.period.label == "2024"
+
+
+def test_dedupe_wording_sets_task_flag(catalog):
+    text = "what's the net for building 17 excluding duplicate rows?"
+    task = resolve_task(
+        _sq(Intent.PNL, text), ExtractedSlots(sub_question_id="q1"), catalog, original=text
+    )
+    assert task.dedupe is True and task.properties == ["Building 17"]
+    assert (
+        resolve_task(
+            _sq(Intent.PNL, "net for building 17"),
+            ExtractedSlots(sub_question_id="q1"),
+            catalog,
+            original="net for building 17",
+        ).dedupe
+        is None
+    )
+
+
+def test_make_money_means_net_not_revenue(catalog):
+    text = "how much money did we make last year?"
+    slots = ExtractedSlots(
+        sub_question_id="q1",
+        metric="revenue",
+        ledger_types=["revenue"],
+        timeframes=[TimeSpec(raw="last year", kind="relative", relative="last_year")],
+    )
+    task = resolve_task(_sq(Intent.PNL, text), slots, catalog, original=text)
+    assert task.ledger_types == [] and task.metric == "net" and task.period.label == "2024"
+    # explicit revenue wording is respected
+    text2 = "how much revenue did we make last year?"
+    task2 = resolve_task(_sq(Intent.PNL, text2), slots, catalog, original=text2)
+    assert task2.ledger_types == ["revenue"]

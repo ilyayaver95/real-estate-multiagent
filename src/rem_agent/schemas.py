@@ -84,10 +84,15 @@ class TimeSpec(BaseModel):
     """A timeframe mention, as structured as the model can make it."""
 
     raw: str = Field(description="The phrase as the user wrote it, e.g. 'this year', 'Q1 2025'.")
-    kind: Literal["year", "quarter", "month", "relative", "all", "unknown"] = "unknown"
+    kind: Literal["year", "quarter", "month", "half", "range", "relative", "all", "unknown"] = (
+        "unknown"
+    )
     year: int | None = None
     quarter: int | None = Field(default=None, ge=1, le=4)
     month: int | None = Field(default=None, ge=1, le=12)
+    half: int | None = Field(default=None, ge=1, le=2)
+    end_year: int | None = Field(default=None, description="For ranges: end year.")
+    end_month: int | None = Field(default=None, ge=1, le=12, description="For ranges: end month.")
     relative: (
         Literal[
             "this_year",
@@ -174,6 +179,7 @@ class ResolvedTask(BaseModel):
     top_n: int | None = None
     breakdown_by: str | None = None
     granularity: str | None = None
+    dedupe: bool | None = Field(default=None, description="User asked to exclude duplicates.")
     issues: list[Issue] = Field(default_factory=list)
 
     @property
