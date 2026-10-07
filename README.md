@@ -362,12 +362,3 @@ parameterised by filters), but a few safety nets are tuned to this ledger and to
   are English-centric.
 - A production version would add LangSmith tracing, response streaming in the UI, caching of
   router/extractor outputs for repeated questions, and evaluation against a golden set in CI.
-
----
-
-## 9. Submission checklist
-
-- [x] Complete Python code on GitHub
-- [x] Fully deployed URL: https://rem-asset-manager-agent.streamlit.app
-- [x] README: setup, solution and architecture, LangGraph workflow, challenges
-- [x] Monitoring dashboard with LLM KPIs
