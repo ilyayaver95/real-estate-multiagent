@@ -96,8 +96,9 @@ Consequences that shaped the design:
 ## 3. Architecture
 
 ```
-app/streamlit_app.py          Chat UI (examples, agent trace, dataset sidebar, dedupe toggle)
-app/pages/1_Monitoring.py     Monitoring dashboard (KPIs from the telemetry store)
+app/streamlit_app.py          Entry point: st.navigation over the two views
+app/views/chat.py             Chat UI (examples, agent trace, dataset sidebar, dedupe toggle)
+app/views/monitoring.py       Monitoring dashboard (KPIs from the telemetry store)
 src/rem_agent/
   assistant.py                Facade: ask() / resume(); builds the graph once
   graph.py                    LangGraph StateGraph: nodes, Send fan-out, interrupt, verifier loop

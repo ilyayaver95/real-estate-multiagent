@@ -21,7 +21,6 @@ from rem_agent.telemetry import MetricsStore, summarize  # noqa: E402
 
 ACCENT = "#1f6f8b"  # single hue: magnitudes only, identity comes from axis labels
 
-st.set_page_config(page_title="Monitoring · Asset Manager Assistant", page_icon="📊", layout="wide")
 st.title("📊 Monitoring")
 st.caption(
     "Per-request telemetry for the multi-agent assistant: latency, model calls, tokens, cost, "
