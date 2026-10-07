@@ -63,6 +63,18 @@ def history_for_agent() -> list[dict]:
     ]
 
 
+def footer(turn: TurnResult) -> str:
+    m = turn.metrics
+    usage = (
+        f" · {m.llm_calls} LLM call(s) · {m.input_tokens + m.output_tokens:,} tokens · "
+        f"${m.cost_usd:.4f}"
+        if m
+        else ""
+    )
+    waiting = " · waiting for your clarification" if turn.interrupted else ""
+    return f"{turn.elapsed_s:.1f}s{usage}{waiting}"
+
+
 def render_trace(turn: TurnResult) -> None:
     with st.expander("Agent trace: how this answer was produced", expanded=False):
         cols = st.columns(3)
@@ -157,17 +169,9 @@ def run_turn(assistant: Assistant, text: str, dedupe: bool) -> None:
             elapsed = time.perf_counter() - t0
         st.session_state.pending_thread = turn.thread_id if turn.interrupted else None
         st.markdown(turn.answer)
-        m = turn.metrics
-        usage = (
-            f" · {m.llm_calls} LLM call(s) · {m.input_tokens + m.output_tokens:,} tokens · "
-            f"${m.cost_usd:.4f}"
-            if m
-            else ""
-        )
-        st.caption(
-            f"{elapsed:.1f}s{usage}"
-            + (" · waiting for your clarification" if turn.interrupted else "")
-        )
+        if not turn.elapsed_s:
+            turn.elapsed_s = elapsed
+        st.caption(footer(turn))
         if turn.trace:
             render_trace(turn)
     st.session_state.messages.append({"role": "assistant", "content": turn.answer, "turn": turn})
@@ -202,8 +206,10 @@ def main() -> None:
     for m in st.session_state.messages:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
-            if m["role"] == "assistant" and m.get("turn") and m["turn"].trace:
-                render_trace(m["turn"])
+            if m["role"] == "assistant" and m.get("turn"):
+                st.caption(footer(m["turn"]))
+                if m["turn"].trace:
+                    render_trace(m["turn"])
 
     placeholder = (
         "Answer the clarification question above..."

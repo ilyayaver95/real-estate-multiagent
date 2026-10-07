@@ -6,7 +6,7 @@ specialised agents (router, extractor, resolver, finance / portfolio / audit / k
 specialists, synthesizer, verifier), with deterministic tools doing every calculation and a
 Streamlit chat UI on top.
 
-- **Live demo:** _URL added after deployment_
+- **Live demo:** https://rem-asset-manager-agent.streamlit.app (Streamlit Community Cloud; the first load after idle takes ~30 s)
 - **Monitoring dashboard:** the *Monitoring* page of the app (latency, tokens, cost, verification, routing KPIs)
 - **Evaluation run (27 questions, verbatim answers):** [`docs/EVAL_RESULTS.md`](docs/EVAL_RESULTS.md)
 
@@ -330,6 +330,6 @@ traces (the regressions are now unit tests).
 ## 9. Submission checklist
 
 - [x] Complete Python code on GitHub
-- [ ] Fully deployed URL (Streamlit Community Cloud)
+- [x] Fully deployed URL: https://rem-asset-manager-agent.streamlit.app
 - [x] README: setup, solution and architecture, LangGraph workflow, challenges
 - [x] Monitoring dashboard with LLM KPIs
