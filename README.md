@@ -7,7 +7,7 @@ specialists, synthesizer, verifier), with deterministic tools doing every calcul
 Streamlit chat UI on top.
 
 - **Live demo:** _URL added after deployment_
-- **Demo video:** _link added after recording_
+- **Monitoring dashboard:** the *Monitoring* page of the app (latency, tokens, cost, verification, routing KPIs)
 - **Evaluation run (27 questions, verbatim answers):** [`docs/EVAL_RESULTS.md`](docs/EVAL_RESULTS.md)
 
 Example interactions (all real outputs, see the evaluation report):
@@ -39,7 +39,7 @@ streamlit run app/streamlit_app.py
 Other entry points:
 
 ```bash
-pytest                                   # 90+ offline tests, no API key needed (~1s)
+pytest                                   # 94 offline tests, no API key needed (~1s)
 python scripts/smoke_live.py "Top 3 tenants in 2025"   # one question, with the agent trace
 python scripts/run_eval.py               # 27-question evaluation -> docs/EVAL_RESULTS.md
 ```
@@ -97,12 +97,14 @@ Consequences that shaped the design:
 
 ```
 app/streamlit_app.py          Chat UI (examples, agent trace, dataset sidebar, dedupe toggle)
+app/pages/1_Monitoring.py     Monitoring dashboard (KPIs from the telemetry store)
 src/rem_agent/
   assistant.py                Facade: ask() / resume(); builds the graph once
   graph.py                    LangGraph StateGraph: nodes, Send fan-out, interrupt, verifier loop
   state.py                    Graph state (TypedDict + reducers) and per-task Send payload
   schemas.py                  Pydantic contracts: RouterOutput, ExtractionOutput, ResolvedTask, ...
   llm.py / config.py          Model factory (structured outputs) and settings
+  telemetry.py                LLM usage callback, per-request metrics, JSONL store, KPI summary
   agents/
     guard.py                  Deterministic input checks (empty, blob, too long, no letters)
     router.py + prompts.py    Intent classification + decomposition (LLM, structured output)
@@ -119,7 +121,7 @@ src/rem_agent/
     portfolio.py              property_details, portfolio_overview, top_tenants, tenant_details
     audit.py                  9 anomaly / data-quality checks
   data/loader.py, catalog.py  Dataset loading, normalisation, duplicate flagging, entity catalog
-tests/                        90+ offline tests (tools against hand-computed numbers, resolver,
+tests/                        94 offline tests (tools against hand-computed numbers, resolver,
                               guard, graph wiring with fake agents, regressions from live runs)
 scripts/                      smoke_live.py, run_eval.py
 ```
@@ -200,6 +202,28 @@ summary, structured detail and duration, which the UI renders as the "Agent trac
 - Sub-questions resolving to identical parameters are merged before fan-out.
 - Data is loaded once and cached; every tool runs in milliseconds; `gpt-4o-mini` keeps the cost
   per question well under a cent.
+
+### Monitoring and LLM KPIs
+
+Every request writes one telemetry record (`rem_agent/telemetry.py`): a LangChain callback
+attached to the graph run counts model calls, input/output tokens and model time; the trace
+supplies per-node latency, intents, specialists, tool calls, verification and revision flags.
+Records go to `outputs/metrics.jsonl` (`REM_METRICS_PATH`; ephemeral on Streamlit Cloud,
+persistent locally) and the chat shows the per-answer footprint ("6.2s · 3 LLM calls · 4,935
+tokens · $0.0009").
+
+The **Monitoring** page aggregates them:
+
+| Group | KPIs |
+|---|---|
+| Latency | average, median, p95, max wall time; latency per request; average time per graph node |
+| LLM usage & cost | LLM calls per request, input/output tokens per request, total tokens, estimated cost per request and cumulative (list prices per model, overridable via `REM_PRICE_INPUT/OUTPUT`) |
+| Quality | figures verified / checked, verification pass rate, revision rate, clarification rate, guard rejections, error rate |
+| Workload | intent mix, specialists used, tool calls per request, recent requests table, raw export |
+
+Typical values with `gpt-4o-mini`: 2–3 model calls and roughly 3,000–5,000 tokens per simple
+question (about $0.0005–0.001), 5 calls and 9,000 tokens for a compound question. A 47 s
+outlier observed during testing (an API-side retry) is exactly what the p95 tile is for.
 
 ---
 
@@ -306,6 +330,6 @@ traces (the regressions are now unit tests).
 ## 9. Submission checklist
 
 - [x] Complete Python code on GitHub
-- [ ] Short demo video
-- [ ] Fully deployed URL
+- [ ] Fully deployed URL (Streamlit Community Cloud)
 - [x] README: setup, solution and architecture, LangGraph workflow, challenges
+- [x] Monitoring dashboard with LLM KPIs

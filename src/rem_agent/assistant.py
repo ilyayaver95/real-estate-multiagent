@@ -19,6 +19,7 @@ from rem_agent.data import DataCatalog, LedgerData, load_ledger
 from rem_agent.graph import build_graph
 from rem_agent.llm import get_chat_model
 from rem_agent.schemas import ResolvedTask, SpecialistResult, TraceEvent
+from rem_agent.telemetry import LLMUsageHandler, MetricsStore, TurnMetrics, build_metrics
 
 
 @dataclass
@@ -32,11 +33,13 @@ class TurnResult:
     results: list[SpecialistResult] = field(default_factory=list)
     verification: dict | None = None
     elapsed_s: float = 0.0
+    metrics: TurnMetrics | None = None
 
 
 class Assistant:
-    def __init__(self, settings: Settings | None = None, llm=None):
+    def __init__(self, settings: Settings | None = None, llm=None, metrics_store=None):
         self.settings = settings or get_settings()
+        self.metrics = metrics_store or MetricsStore()
         self.ledger: LedgerData = load_ledger(self.settings.data_path)
         self.catalog = DataCatalog(self.ledger)
         self.llm = llm or get_chat_model(self.settings)
@@ -58,19 +61,30 @@ class Assistant:
     ) -> TurnResult:
         """Run one turn. A fresh thread per turn; conversation memory is passed as ``history``."""
         thread_id = thread_id or uuid.uuid4().hex
-        config = {"configurable": {"thread_id": thread_id}}
+        handler = LLMUsageHandler()
+        config = {"configurable": {"thread_id": thread_id}, "callbacks": [handler]}
         t0 = time.perf_counter()
         state = self.graph.invoke(
             {"question": question, "history": history or [], "dedupe": dedupe}, config
         )
-        return self._to_result(state, thread_id, time.perf_counter() - t0)
+        result = self._to_result(state, thread_id, time.perf_counter() - t0)
+        return self._record(result, handler, question, dedupe)
 
     def resume(self, thread_id: str, reply: str) -> TurnResult:
         """Continue a turn that paused for clarification."""
-        config = {"configurable": {"thread_id": thread_id}}
+        handler = LLMUsageHandler()
+        config = {"configurable": {"thread_id": thread_id}, "callbacks": [handler]}
         t0 = time.perf_counter()
         state = self.graph.invoke(Command(resume=reply), config)
-        return self._to_result(state, thread_id, time.perf_counter() - t0)
+        result = self._to_result(state, thread_id, time.perf_counter() - t0)
+        return self._record(result, handler, reply, bool(state.get("dedupe", False)))
+
+    def _record(
+        self, result: TurnResult, handler: LLMUsageHandler, question: str, dedupe: bool
+    ) -> TurnResult:
+        result.metrics = build_metrics(result, handler, self.settings.model, question, dedupe)
+        self.metrics.record(result.metrics)
+        return result
 
     def _to_result(self, state: dict, thread_id: str, elapsed_s: float = 0.0) -> TurnResult:
         interrupts = state.get("__interrupt__") or []

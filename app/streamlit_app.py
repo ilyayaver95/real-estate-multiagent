@@ -117,6 +117,16 @@ def render_sidebar(assistant: Assistant) -> bool:
                 "lease terms, debt balances. The assistant says so instead of guessing."
             )
         st.divider()
+        st.page_link(
+            "pages/1_Monitoring.py",
+            label="📊 Monitoring dashboard",
+            help="Latency, tokens, cost, verification and routing KPIs",
+        )
+        st.page_link(
+            "pages/1_Monitoring.py",
+            label="📊 Monitoring dashboard",
+            help="Latency, tokens, cost, verification and routing KPIs",
+        )
         st.caption(f"Model: `{assistant.settings.model}`")
         if st.button("Clear conversation", use_container_width=True):
             st.session_state.messages = []
@@ -147,8 +157,16 @@ def run_turn(assistant: Assistant, text: str, dedupe: bool) -> None:
             elapsed = time.perf_counter() - t0
         st.session_state.pending_thread = turn.thread_id if turn.interrupted else None
         st.markdown(turn.answer)
+        m = turn.metrics
+        usage = (
+            f" · {m.llm_calls} LLM call(s) · {m.input_tokens + m.output_tokens:,} tokens · "
+            f"${m.cost_usd:.4f}"
+            if m
+            else ""
+        )
         st.caption(
-            f"{elapsed:.1f}s" + (" · waiting for your clarification" if turn.interrupted else "")
+            f"{elapsed:.1f}s{usage}"
+            + (" · waiting for your clarification" if turn.interrupted else "")
         )
         if turn.trace:
             render_trace(turn)
